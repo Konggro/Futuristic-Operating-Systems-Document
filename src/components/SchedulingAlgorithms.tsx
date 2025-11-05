@@ -67,10 +67,13 @@ export default function SchedulingAlgorithms() {
   const calculateGanttChart = (algoName: string, processes: Process[]): GanttBlock[] => {
     const gantt: GanttBlock[] = [];
     
+    // Ensure processes are sorted by arrival time for consistent processing
+    const sortedProcesses = [...processes].sort((a, b) => a.arrival - b.arrival);
+    
     if (algoName === 'FCFS') {
       // FCFS: Execute in arrival order
       let time = 0;
-      processes.forEach((proc) => {
+      sortedProcesses.forEach((proc) => {
         if (time < proc.arrival) time = proc.arrival;
         gantt.push({
           processId: proc.id,
@@ -81,26 +84,37 @@ export default function SchedulingAlgorithms() {
         time += proc.burst;
       });
     } else if (algoName === 'SJF') {
-      // SJF: Sort by burst time, execute shortest first
-      const sorted = [...processes].sort((a, b) => {
-        if (a.burst !== b.burst) return a.burst - b.burst;
-        return a.arrival - b.arrival;
-      });
+      // SJF (Non-preemptive): At each time, select the shortest available job
       let time = 0;
       const completed = new Set<string>();
+      const processesCopy = [...sortedProcesses];
       
-      while (completed.size < sorted.length) {
-        // Find available processes
-        const available = sorted.filter(p => !completed.has(p.id) && p.arrival <= time);
+      while (completed.size < processesCopy.length) {
+        // Find all available (arrived) processes that haven't completed
+        const available = processesCopy.filter(p => 
+          !completed.has(p.id) && p.arrival <= time
+        );
+        
         if (available.length === 0) {
-          // No process available, move time forward
-          const nextArrival = sorted.find(p => !completed.has(p.id))?.arrival || time;
-          time = nextArrival;
-          continue;
+          // No process available, move time to next arrival
+          const nextArrival = processesCopy
+            .filter(p => !completed.has(p.id))
+            .map(p => p.arrival)
+            .sort((a, b) => a - b)[0];
+          if (nextArrival !== undefined) {
+            time = nextArrival;
+            continue;
+          }
+          break;
         }
         
-        // Select shortest job
-        const shortest = available.reduce((min, p) => p.burst < min.burst ? p : min);
+        // Select shortest job among available (by burst time, then arrival time for tie-break)
+        const shortest = available.reduce((min, p) => {
+          if (p.burst < min.burst) return p;
+          if (p.burst === min.burst && p.arrival < min.arrival) return p;
+          return min;
+        });
+        
         gantt.push({
           processId: shortest.id,
           startTime: time,
@@ -111,23 +125,23 @@ export default function SchedulingAlgorithms() {
         completed.add(shortest.id);
       }
     } else if (algoName === 'Round Robin') {
-      // Round Robin: Time quantum = 2
+      // Round Robin: Time quantum = 2, processes execute in circular order (FIFO queue)
       const quantum = 2;
       const queue: Process[] = [];
-      const processesCopy = processes.map(p => ({ ...p, remaining: p.burst }));
+      const processesCopy = sortedProcesses.map(p => ({ ...p, remaining: p.burst }));
       let time = 0;
       let processIndex = 0;
       
-      // Add processes as they arrive
       while (processesCopy.some(p => (p.remaining || 0) > 0)) {
-        // Add newly arrived processes
+        // Add all newly arrived processes to the end of queue (FIFO order)
+        // This includes processes that arrived exactly at current time
         while (processIndex < processesCopy.length && processesCopy[processIndex].arrival <= time) {
           queue.push(processesCopy[processIndex]);
           processIndex++;
         }
         
         if (queue.length === 0) {
-          // No process ready, advance time
+          // No process ready, advance time to next arrival
           if (processIndex < processesCopy.length) {
             time = processesCopy[processIndex].arrival;
             continue;
@@ -135,6 +149,7 @@ export default function SchedulingAlgorithms() {
           break;
         }
         
+        // Get next process from front of queue (FIFO - First In First Out)
         const current = queue.shift()!;
         const executeTime = Math.min(quantum, current.remaining || 0);
         
@@ -148,36 +163,54 @@ export default function SchedulingAlgorithms() {
         time += executeTime;
         current.remaining = (current.remaining || 0) - executeTime;
         
-        // Add newly arrived processes
-        while (processIndex < processesCopy.length && processesCopy[processIndex].arrival <= time) {
+        // Add processes that arrived during this execution (before re-adding current)
+        // This ensures newly arrived processes are added before the current process
+        // gets re-added to the queue (fair scheduling)
+        while (processIndex < processesCopy.length && processesCopy[processIndex].arrival < time) {
           queue.push(processesCopy[processIndex]);
           processIndex++;
         }
         
-        // Re-add current process if not finished
+        // Re-add current process to end of queue if not finished (round robin circular)
         if ((current.remaining || 0) > 0) {
           queue.push(current);
         }
       }
     } else if (algoName === 'Priority') {
-      // Priority: Lower number = higher priority (1 > 2 > 3)
+      // Priority (Non-preemptive): Lower number = higher priority (1 > 2 > 3)
+      // Once a process starts, it runs to completion before another process can start
       let time = 0;
       const completed = new Set<string>();
-      const processesCopy = [...processes];
+      const processesCopy = [...sortedProcesses];
       
       while (completed.size < processesCopy.length) {
-        // Find available processes
-        const available = processesCopy.filter(p => !completed.has(p.id) && p.arrival <= time);
+        // Find all available (arrived) processes that haven't completed
+        const available = processesCopy.filter(p => 
+          !completed.has(p.id) && p.arrival <= time
+        );
+        
         if (available.length === 0) {
-          const nextArrival = processesCopy.find(p => !completed.has(p.id))?.arrival || time;
-          time = nextArrival;
-          continue;
+          // No process available, move time to next arrival
+          const nextArrival = processesCopy
+            .filter(p => !completed.has(p.id))
+            .map(p => p.arrival)
+            .sort((a, b) => a - b)[0];
+          if (nextArrival !== undefined) {
+            time = nextArrival;
+            continue;
+          }
+          break;
         }
         
         // Select highest priority (lowest priority number)
-        const highestPriority = available.reduce((min, p) => 
-          (p.priority || 999) < (min.priority || 999) ? p : min
-        );
+        // Tie-break: if priorities are equal, select by arrival time (FCFS)
+        const highestPriority = available.reduce((min, p) => {
+          const pPriority = p.priority ?? 999;
+          const minPriority = min.priority ?? 999;
+          if (pPriority < minPriority) return p;
+          if (pPriority === minPriority && p.arrival < min.arrival) return p;
+          return min;
+        });
         
         gantt.push({
           processId: highestPriority.id,
@@ -211,9 +244,9 @@ export default function SchedulingAlgorithms() {
       color: '#00FF88', 
       desc: 'Shortest Job First - Богино ажил эхэнд',
       processes: [
-        { id: 'P1', arrival: 0, burst: 6, color: '#00FF88' },
-        { id: 'P2', arrival: 1, burst: 3, color: '#00F0FF' },
-        { id: 'P3', arrival: 2, burst: 4, color: '#FFD700' },
+        { id: 'P1', arrival: 0, burst: 5, color: '#00FF88' },
+        { id: 'P2', arrival: 0, burst: 2, color: '#00F0FF' },
+        { id: 'P3', arrival: 0, burst: 4, color: '#FFD700' },
       ],
     },
     { 
@@ -234,9 +267,9 @@ export default function SchedulingAlgorithms() {
       color: '#9D00FF', 
       desc: 'Давуу эрхээр (бага тоо = өндөр эрх)',
       processes: [
-        { id: 'P1', arrival: 0, burst: 4, priority: 2, color: '#9D00FF' },
-        { id: 'P2', arrival: 1, burst: 3, priority: 1, color: '#00F0FF' },
-        { id: 'P3', arrival: 2, burst: 2, priority: 3, color: '#00FF88' },
+        { id: 'P1', arrival: 0, burst: 4, priority: 3, color: '#9D00FF' },
+        { id: 'P2', arrival: 0, burst: 3, priority: 1, color: '#00F0FF' },
+        { id: 'P3', arrival: 0, burst: 2, priority: 2, color: '#00FF88' },
       ],
     },
   ];
@@ -587,8 +620,8 @@ export default function SchedulingAlgorithms() {
                                   animate={{ scaleX: 1 }}
                                   transition={{ delay: i * 0.05 + 0.2 }}
                                 />
-                              </motion.div>
-                            ))}
+                  </motion.div>
+                ))}
                           </div>
                           
                           {/* Gantt blocks */}
@@ -596,7 +629,12 @@ export default function SchedulingAlgorithms() {
                             {ganttChart.length > 0 && (() => {
                               const totalTime = Math.max(...ganttChart.map(g => g.endTime));
                               const timeUnitWidth = 60; // Fixed pixel width per time unit
-                              return ganttChart.map((block, idx) => {
+                              // Sort blocks by startTime to ensure correct visual order
+                              const sortedBlocks = [...ganttChart].sort((a, b) => {
+                                if (a.startTime !== b.startTime) return a.startTime - b.startTime;
+                                return a.endTime - b.endTime;
+                              });
+                              return sortedBlocks.map((block, idx) => {
                                 const left = block.startTime * timeUnitWidth;
                                 const width = (block.endTime - block.startTime) * timeUnitWidth;
                                 const isActive = isRunning && currentTime >= block.startTime && currentTime < block.endTime;
