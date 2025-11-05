@@ -170,7 +170,7 @@ export default function ProcessMemory() {
                   {memorySegments.map((segment, i) => (
                     <motion.div
                       key={segment.name}
-                      className="relative h-32 rounded-lg border-2 backdrop-blur-sm overflow-hidden"
+                      className="relative h-32 rounded-lg border-2 backdrop-blur-sm overflow-hidden cursor-pointer"
                       style={{
                         borderColor: segment.color,
                         backgroundColor: `${segment.color}10`,
@@ -183,7 +183,6 @@ export default function ProcessMemory() {
                         scale: 1.02,
                       }}
                       onClick={() => setActiveSegment(activeSegment === segment.name ? null : segment.name)}
-                      className="cursor-pointer"
                     >
 
 
